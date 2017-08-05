@@ -640,7 +640,7 @@ int libvshadow_volume_open_file_io_handle(
 {
 	libvshadow_internal_volume_t *internal_volume = NULL;
 	static char *function                         = "libvshadow_volume_open_file_io_handle";
-	int bfio_access_flags                         = 0;
+	int bfio_access_flags                         = access_flags; /* otherwise they were ignored, defines are the same so it's ok */
 	int file_io_handle_is_open                    = 0;
 	int file_io_handle_opened_in_library          = 0;
 
@@ -679,21 +679,6 @@ int libvshadow_volume_open_file_io_handle(
 		 function );
 
 		return( -1 );
-	}
-	if( ( access_flags & LIBVSHADOW_ACCESS_FLAG_WRITE ) != 0 )
-	{
-		libcerror_error_set(
-		 error,
-		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
-		 LIBCERROR_ARGUMENT_ERROR_UNSUPPORTED_VALUE,
-		 "%s: write access currently not supported.",
-		 function );
-
-		return( -1 );
-	}
-	if( ( access_flags & LIBVSHADOW_ACCESS_FLAG_READ ) != 0 )
-	{
-		bfio_access_flags = LIBBFIO_ACCESS_FLAG_READ;
 	}
 	file_io_handle_is_open = libbfio_handle_is_open(
 	                          file_io_handle,

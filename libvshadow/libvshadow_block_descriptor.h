@@ -66,6 +66,14 @@ struct libvshadow_block_descriptor
 	/* The overlay block descriptor
 	 */
 	libvshadow_block_descriptor_t *overlay;
+	
+	/* The location of the block descriptor entry itself on the disk
+	 */
+	off64_t descriptor_location;
+	
+	/* The index of the descriptor in the block
+	 */
+	int list_entry_number;
 };
 
 int libvshadow_block_descriptor_initialize(

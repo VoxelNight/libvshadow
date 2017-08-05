@@ -99,6 +99,10 @@ AX_LIBCSYSTEM_CHECK_ENABLE
 dnl Check for libfuse Filesystem in Userspace (FUSE) support
 AX_LIBFUSE_CHECK_ENABLE
 
+dnl Check for presence of ntfs3g library and headers
+AC_SEARCH_LIBS([ntfs_attr_get_search_ctx], [ntfs-3g])
+AC_CHECK_HEADERS([ntfs-3g/volume.h ntfs-3g/layout.h ntfs-3g/types.h])
+
 dnl Check for functions
 AS_IF(
  [test "x$ac_cv_enable_winapi" = xno],

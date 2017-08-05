@@ -108,6 +108,19 @@ int libvshadow_store_descriptor_initialize(
 		return( -1 );
 	}
 	if( libcdata_list_initialize(
+	     &( ( *store_descriptor )->block_list ),
+	     error ) != 1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_RUNTIME_ERROR_INITIALIZE_FAILED,
+		 "%s: unable to create block list.",
+		 function );
+
+		goto on_error;
+	}
+	if( libcdata_list_initialize(
 	     &( ( *store_descriptor )->block_descriptors_list ),
 	     error ) != 1 )
 	{
@@ -295,6 +308,20 @@ int libvshadow_store_descriptor_free(
 		if( libcdata_btree_free(
 		     &( ( *store_descriptor )->forward_block_descriptors_tree ),
 		     (int (*)(intptr_t **, libcerror_error_t **)) &libvshadow_block_descriptor_free,
+		     error ) != 1 )
+		{
+			libcerror_error_set(
+			 error,
+			 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+			 LIBCERROR_RUNTIME_ERROR_FINALIZE_FAILED,
+			 "%s: unable to free forward block descriptors tree.",
+			 function );
+
+			result = -1;
+		}
+		if( libcdata_list_free(
+		     &( ( *store_descriptor )->block_list ),
+		     (int (*)(intptr_t **, libcerror_error_t **)) &libvshadow_store_block_free,
 		     error ) != 1 )
 		{
 			libcerror_error_set(
@@ -722,6 +749,10 @@ int libvshadow_store_descriptor_read_catalog_entry(
 		 store_descriptor->store_bitmap_offset );
 
 		byte_stream_copy_to_uint64_little_endian(
+		 &( catalog_block_data[ 56 ] ),
+		 store_descriptor->store_inode );
+
+		byte_stream_copy_to_uint64_little_endian(
 		 &( catalog_block_data[ 72 ] ),
 		 store_descriptor->store_previous_bitmap_offset );
 
@@ -905,6 +936,32 @@ int libvshadow_store_descriptor_read_store_header(
 
 		goto on_error;
 	}
+	
+	/* Add the block to the block list
+	 */
+    if (libcdata_list_append_value(
+                         store_descriptor->block_list,
+                         (intptr_t *) store_block,
+                         error ) == -1)
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_IO_ERROR_READ_FAILED,
+		 "%s: unable to add store block at offset: 0x%08" PRIx64 " to store block list.",
+		 function,
+		 store_descriptor->store_header_offset );
+
+		goto on_error;
+	}
+	
+#if defined( HAVE_DEBUG_OUTPUT )
+	if( libcnotify_verbose != 0 )
+	{
+		libcnotify_printf("%s: adding block with offset = 0x08%" PRIx64 " to list\n", function, store_block->offset);
+	}
+#endif
+	
 	if( store_block->record_type != LIBVSHADOW_RECORD_TYPE_STORE_HEADER )
 	{
 		libcerror_error_set(
@@ -1206,27 +1263,9 @@ int libvshadow_store_descriptor_read_store_header(
 			 &( store_header_data[ store_header_data_offset ] ),
 			 store_block->data_size - store_header_data_offset,
 			 LIBCNOTIFY_PRINT_DATA_FLAG_GROUP_DATA );
-		}
-	}
-#endif
-	if( libvshadow_store_block_free(
-	     &store_block,
-	     error ) != 1 )
-	{
-		libcerror_error_set(
-		 error,
-		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
-		 LIBCERROR_RUNTIME_ERROR_FINALIZE_FAILED,
-		 "%s: unable to free store block.",
-		 function );
-
-		goto on_error;
-	}
-#if defined( HAVE_DEBUG_OUTPUT )
-	if( libcnotify_verbose != 0 )
-	{
 		libcnotify_printf(
 		 "\n" );
+		}
 	}
 #endif
 #if defined( HAVE_LIBVSHADOW_MULTI_THREAD_SUPPORT )
@@ -1247,12 +1286,6 @@ int libvshadow_store_descriptor_read_store_header(
 	return( 1 );
 
 on_error:
-	if( store_block != NULL )
-	{
-		libvshadow_store_block_free(
-		 &store_block,
-		 NULL );
-	}
 #if defined( HAVE_LIBVSHADOW_MULTI_THREAD_SUPPORT )
 	libcthreads_read_write_lock_release_for_write(
 	 store_descriptor->read_write_lock,
@@ -1345,6 +1378,32 @@ int libvshadow_store_descriptor_read_store_bitmap(
 
 		goto on_error;
 	}
+	
+	/* Add the block to the block list
+	 */
+    if (libcdata_list_append_value(
+                         store_descriptor->block_list,
+                         (intptr_t *) store_block,
+                         error ) == -1)
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_IO_ERROR_READ_FAILED,
+		 "%s: unable to add store block at offset: 0x%08" PRIx64 " to store block list.",
+		 function,
+		 store_descriptor->store_header_offset );
+
+		goto on_error;
+	}
+	
+#if defined( HAVE_DEBUG_OUTPUT )
+	if( libcnotify_verbose != 0 )
+	{
+		libcnotify_printf("%s: adding block with offset = 0x08%" PRIx64 " to list\n", function, store_block->offset);
+	}
+#endif
+
 	if( store_block->record_type != LIBVSHADOW_RECORD_TYPE_STORE_BITMAP )
 	{
 		libcerror_error_set(
@@ -1471,19 +1530,6 @@ int libvshadow_store_descriptor_read_store_bitmap(
 			goto on_error;
 		}
 	}
-	if( libvshadow_store_block_free(
-	     &store_block,
-	     error ) != 1 )
-	{
-		libcerror_error_set(
-		 error,
-		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
-		 LIBCERROR_RUNTIME_ERROR_FINALIZE_FAILED,
-		 "%s: unable to free store block.",
-		 function );
-
-		goto on_error;
-	}
 #if defined( HAVE_DEBUG_OUTPUT )
 	if( libcnotify_verbose != 0 )
 	{
@@ -1494,12 +1540,6 @@ int libvshadow_store_descriptor_read_store_bitmap(
 	return( 1 );
 
 on_error:
-	if( store_block != NULL )
-	{
-		libvshadow_store_block_free(
-		 &store_block,
-		 NULL );
-	}
 	return( -1 );
 }
 
@@ -1519,6 +1559,7 @@ int libvshadow_store_descriptor_read_store_block_list(
 	uint8_t *block_data                             = NULL;
 	static char *function                           = "libvshadow_store_descriptor_read_store_block_list";
 	uint16_t block_size                             = 0;
+	int list_entry_number                           = 0;
 	int result                                      = 0;
 
 	if( store_descriptor == NULL )
@@ -1573,6 +1614,32 @@ int libvshadow_store_descriptor_read_store_block_list(
 
 		goto on_error;
 	}
+	
+	/* Add the block to the block list
+	 */
+    if (libcdata_list_append_value(
+                         store_descriptor->block_list,
+                         (intptr_t *) store_block,
+                         error ) == -1)
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_IO_ERROR_READ_FAILED,
+		 "%s: unable to add store block at offset: 0x%08" PRIx64 " to store block list.",
+		 function,
+		 store_descriptor->store_header_offset );
+
+		goto on_error;
+	}
+	
+#if defined( HAVE_DEBUG_OUTPUT )
+	if( libcnotify_verbose != 0 )
+	{
+		libcnotify_printf("%s: adding block with offset = 0x08%" PRIx64 " to list\n", function, store_block->offset);
+	}
+#endif
+	
 	if( store_block->record_type != LIBVSHADOW_RECORD_TYPE_STORE_INDEX )
 	{
 		libcerror_error_set(
@@ -1625,6 +1692,10 @@ int libvshadow_store_descriptor_read_store_block_list(
 		}
 		else if( result != 0 )
 		{
+ 			/* add disk location */
+ 			block_descriptor->descriptor_location = file_offset + 128 + (list_entry_number * sizeof( vshadow_store_block_list_entry_t ));
+			block_descriptor->list_entry_number = list_entry_number;
+			
 			if( libvshadow_block_tree_insert(
 			     store_descriptor->forward_block_descriptors_tree,
 			     store_descriptor->reverse_block_descriptors_tree,
@@ -1655,8 +1726,19 @@ int libvshadow_store_descriptor_read_store_block_list(
 
 				goto on_error;
 			}
+			
+			/* Add the offsets to the file runs if we need to/can
+			 * We just add the offset of the data itself, not the block descriptor
+			 * The block descriptor location will be covered when the block list is scanned later
+			 */
+			if (store_descriptor->store_runs != NULL)
+			{
+				libvshadow_store_run_mark_as_used(&(store_descriptor->store_runs), block_descriptor->offset, error);
+			}
+			
 			block_descriptor = NULL;
 		}
+		
 		if( block_descriptor != NULL )
 		{
 			if( libvshadow_block_descriptor_free(
@@ -1676,21 +1758,10 @@ int libvshadow_store_descriptor_read_store_block_list(
 			}
 			block_descriptor = NULL;
 		}
+		
 		block_data += sizeof( vshadow_store_block_list_entry_t );
 		block_size -= sizeof( vshadow_store_block_list_entry_t );
-	}
-	if( libvshadow_store_block_free(
-	     &store_block,
-	     error ) != 1 )
-	{
-		libcerror_error_set(
-		 error,
-		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
-		 LIBCERROR_RUNTIME_ERROR_FINALIZE_FAILED,
-		 "%s: unable to free store block.",
-		 function );
-
-		goto on_error;
+		list_entry_number++;
 	}
 	return( 1 );
 
@@ -1699,12 +1770,6 @@ on_error:
 	{
 		libvshadow_block_descriptor_free(
 		 &block_descriptor,
-		 NULL );
-	}
-	if( store_block != NULL )
-	{
-		libvshadow_store_block_free(
-		 &store_block,
 		 NULL );
 	}
 	return( -1 );
@@ -1780,6 +1845,32 @@ int libvshadow_store_descriptor_read_store_block_range_list(
 
 		goto on_error;
 	}
+	
+	/* Add the block to the block list
+	 */
+    if (libcdata_list_append_value(
+                         store_descriptor->block_list,
+                         (intptr_t *) store_block,
+                         error ) == -1)
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_IO_ERROR_READ_FAILED,
+		 "%s: unable to add store block at offset: 0x%08" PRIx64 " to store block list.",
+		 function,
+		 store_descriptor->store_header_offset );
+
+		goto on_error;
+	}
+	
+#if defined( HAVE_DEBUG_OUTPUT )
+	if( libcnotify_verbose != 0 )
+	{
+		libcnotify_printf("%s: adding block with offset = 0x08%" PRIx64 " to list\n", function, store_block->offset);
+	}
+#endif
+	
 	if( store_block->record_type != LIBVSHADOW_RECORD_TYPE_STORE_BLOCK_RANGE )
 	{
 		libcerror_error_set(
@@ -1833,6 +1924,7 @@ int libvshadow_store_descriptor_read_store_block_range_list(
 		else if( result != 0 )
 		{
 /* TODO do something useful with the range descriptors */
+/* I've got you man. Did something useful with them. (Sort of).*/
 		}
 		if( block_range_descriptor != NULL )
 		{
@@ -1856,19 +1948,6 @@ int libvshadow_store_descriptor_read_store_block_range_list(
 		block_data += sizeof( vshadow_store_block_range_list_entry_t );
 		block_size -= sizeof( vshadow_store_block_range_list_entry_t );
 	}
-	if( libvshadow_store_block_free(
-	     &store_block,
-	     error ) != 1 )
-	{
-		libcerror_error_set(
-		 error,
-		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
-		 LIBCERROR_RUNTIME_ERROR_FINALIZE_FAILED,
-		 "%s: unable to free store block.",
-		 function );
-
-		goto on_error;
-	}
 	return( 1 );
 
 on_error:
@@ -1876,12 +1955,6 @@ on_error:
 	{
 		libvshadow_block_range_descriptor_free(
 		 &block_range_descriptor,
-		 NULL );
-	}
-	if( store_block != NULL )
-	{
-		libvshadow_store_block_free(
-		 &store_block,
 		 NULL );
 	}
 	return( -1 );
@@ -2724,6 +2797,802 @@ on_error:
 	 NULL );
 #endif
 	return( -1 );
+}
+
+/* Write version of the above function */
+
+/* Reads data at the specified offset into a buffer
+ * Returns the number of bytes read or -1 on error
+ */
+ssize_t libvshadow_store_descriptor_write_buffer(
+         libvshadow_store_descriptor_t *store_descriptor,
+         libbfio_handle_t *file_io_handle,
+         uint8_t *buffer,
+         size_t buffer_size,
+         off64_t offset,
+         libvshadow_store_descriptor_t *active_store_descriptor,
+         libcerror_error_t **error )
+{
+    static char *function                                   = "libvshadow_store_descriptor_write_buffer";
+	libcdata_tree_node_t *block_tree_node = NULL;
+	libcdata_list_element_t *last_descriptor_element = NULL;
+	libvshadow_block_descriptor_t *temp_block_descriptor = NULL;
+	libvshadow_block_descriptor_t *new_block_descriptor = NULL;
+	libvshadow_store_block_t *temp_block = NULL;
+	libvshadow_store_block_t *new_block = NULL;
+	libcdata_list_element_t *temp_block_element = NULL;
+	libcdata_list_element_t *temp_block_element2 = NULL;
+	off64_t chunk_offset;
+	off64_t temp_offset1;
+	off64_t next_descriptor_address = 0;
+	size64_t write_size;
+	uint8_t descriptor_buffer[32];
+	uint8_t data_buffer[16384];
+	uint32_t overlay_bitmap;
+	int i;
+	int result;
+
+
+#if defined( HAVE_DEBUG_OUTPUT )
+	if( libcnotify_verbose != 0 )
+		libcnotify_printf("%s: Entered function, specified write offset = 0x%08" PRIx64 " \n", function, offset);
+#endif
+    
+	if( store_descriptor == NULL )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+		 LIBCERROR_ARGUMENT_ERROR_INVALID_VALUE,
+		 "%s: invalid store descriptor.",
+		 function );
+
+		return( -1 );
+	}
+	if( store_descriptor->has_in_volume_store_data == 0 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+		 LIBCERROR_ARGUMENT_ERROR_INVALID_VALUE,
+		 "%s: invalid store descriptor - missing in-volume store data.",
+		 function );
+
+		return( -1 );
+	}
+	if( active_store_descriptor == NULL )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+		 LIBCERROR_ARGUMENT_ERROR_INVALID_VALUE,
+		 "%s: invalid active store descriptor.",
+		 function );
+
+		return( -1 );
+	}
+	/* This function will acquire the write lock
+	 */
+	if( libvshadow_store_descriptor_read_block_descriptors(
+	     store_descriptor,
+	     file_io_handle,
+	     error ) != 1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_IO,
+		 LIBCERROR_IO_ERROR_READ_FAILED,
+		 "%s: unable to read block descriptors.",
+		 function );
+
+		return( -1 );
+	}
+
+#if defined( HAVE_DEBUG_OUTPUT )
+	if( libcnotify_verbose != 0 )
+	{
+		libcnotify_printf(
+		 "%s: store: %02d requested offset: 0x%08" PRIx64 "\n",
+		 function,
+		 store_descriptor->index,
+		 offset );
+	}
+#endif
+
+	/* What 16K chunk are we writing to?
+	 */
+	chunk_offset = offset - (offset % 0x4000);
+	
+	/* Figure out how much data we will be writing this function call
+	 * For simplicity we only write up to 16K at a time
+	 */
+    write_size = ((offset / 0x4000) * 0x4000 + 0x4000) - offset;
+    if (buffer_size < write_size)
+        write_size = buffer_size;
+
+#if defined( HAVE_DEBUG_OUTPUT )
+	if( libcnotify_verbose != 0 )
+	{
+		libcnotify_printf(
+			"%s: chunk offset = 0x%" PRIx64 " offset = %" PRIx64 " write size = %" PRIx64 "\n",
+			function, chunk_offset, offset, write_size);
+	}
+#endif
+
+	/* First let's see if the requested write offset already has a block descriptor
+	 */
+	result = libcdata_btree_get_value_by_value(
+			  store_descriptor->forward_block_descriptors_tree,
+			  (intptr_t *) &chunk_offset,
+			  (int (*)(intptr_t *, intptr_t *, libcerror_error_t **)) &libvshadow_block_descriptor_compare_range_by_original_offset_value,
+			  &block_tree_node,
+			  (intptr_t **) &temp_block_descriptor,
+			  error );
+
+	/* Is there already a block for this offset?
+	 */
+	if (result == 1)
+	{
+#if defined( HAVE_DEBUG_OUTPUT )
+		if( libcnotify_verbose != 0 )
+		{
+			libcnotify_printf(
+				"%s: found an existing descriptor at offset = %" PRIx64 " type = %d original offset = %" PRIx64 "\n",
+				function, temp_block_descriptor->descriptor_location, temp_block_descriptor->flags, temp_block_descriptor->original_offset);
+		}
+#endif
+		
+		/* If we're writing an entire block
+		 * We just replace the current block and clear any overlays for it
+		 */
+		if (write_size == 16384)
+		{
+			/* If offset = 0, this is probably a forwarder block.
+			 * To convert it to a regular block, we need to find an address for it's data, and set the offsets in the block descriptor.
+			 */
+			if (temp_block_descriptor->offset == 0)
+			{
+#if defined( HAVE_DEBUG_OUTPUT )
+				if( libcnotify_verbose != 0 )
+				{
+					libcnotify_printf(
+						"%s: existing descriptor has offset = 0\n",
+						function);
+				}
+#endif
+				temp_block_descriptor->offset = libvshadow_store_run_get_next_free(&(store_descriptor->store_runs), error);
+				if (temp_block_descriptor->offset == 0)
+				{
+					libcnotify_printf("%s: store: %02d Couldn't get free address for converting a forwader block at  0x%08" PRIx64 "to a normal block\n",
+						function, store_descriptor->index, temp_block_descriptor->descriptor_location);
+					goto on_error;
+				}
+				temp_block_descriptor->relative_offset = temp_block_descriptor->offset - store_descriptor->store_header_offset;
+				/* Write the new addresses to disk
+				 */
+				memory_set(descriptor_buffer, 0, 32);
+				memory_copy(descriptor_buffer + 8, &temp_block_descriptor->relative_offset, 8);
+				memory_copy(descriptor_buffer + 16, &temp_block_descriptor->offset, 8);
+				libbfio_handle_seek_offset(file_io_handle, temp_block_descriptor->descriptor_location + 8, SEEK_SET, error);
+				if (libbfio_handle_write_buffer(file_io_handle, descriptor_buffer + 8, 16, error) != 16)
+				{
+					libcnotify_printf("%s: store: %02d error writing new offsets to probable forwarder block at: 0x%08" PRIx64 "\n",
+						function, store_descriptor->index, temp_block_descriptor->descriptor_location);
+					goto on_error;
+				}
+
+#if defined( HAVE_DEBUG_OUTPUT )
+				if( libcnotify_verbose != 0 )
+				{
+					libcnotify_printf(
+						"%s: wrote new offset = %" PRIx64 " relative offset = %" PRIx64 "\n",
+						function, temp_block_descriptor->offset, temp_block_descriptor->relative_offset);
+				}
+#endif
+			}
+			
+			/* Seek to the correct location to write the new data
+			 */
+			libbfio_handle_seek_offset(file_io_handle, temp_block_descriptor->offset, SEEK_SET, error);
+		    if (libbfio_handle_write_buffer(file_io_handle, buffer, write_size, error) != 16384)
+			{
+				libcnotify_printf("%s: store: %02d error writing new data to offset: 0x%08" PRIx64 "\n",
+					function, store_descriptor->index, offset);
+				goto on_error;
+			} 
+			
+			/* If the existing block was not a regular block, change it to a regular block
+			 */
+			if (temp_block_descriptor->flags != 0)
+			{
+				memory_set(descriptor_buffer, 0, 32);
+				/* We're writing over the Flags (to make it a normal descriptor) and the Allocation Bitmap (which should be 0 for regular blocks)
+				 */
+				libbfio_handle_seek_offset(file_io_handle, temp_block_descriptor->descriptor_location+24, SEEK_SET, error);
+				if (libbfio_handle_write_buffer(file_io_handle, descriptor_buffer, 8, error) != 8)
+				{
+					libcnotify_printf("%s: store: %02d error changing block descriptor flag to '0' on descriptor at: 0x%08" PRIx64 "\n",
+						function, store_descriptor->index, temp_block_descriptor->descriptor_location);
+					goto on_error;
+				}
+				temp_block_descriptor->flags = 0;
+				
+#if defined( HAVE_DEBUG_OUTPUT )
+				if( libcnotify_verbose != 0 )
+				{
+					libcnotify_printf(
+						"%s: just updated flags to 0 for descriptor at location = %" PRIx64 "\n",
+						function, temp_block_descriptor->descriptor_location);
+				}
+#endif
+			}
+			
+			/* If the existing block had an overlay associated with it, clear it (in memory and on disk)
+			 */
+			if (temp_block_descriptor->overlay != NULL)
+			{
+				/* Write over the overlay's data
+				 */
+				memory_set(data_buffer, 0, 16384);
+				libbfio_handle_seek_offset(file_io_handle, temp_block_descriptor->overlay->offset, SEEK_SET, error);
+				if (libbfio_handle_write_buffer(file_io_handle, data_buffer, 16384, error) != 16384)
+				{
+					libcnotify_printf("%s: store: %02d error writing over overlay block descriptor's data at: 0x%08" PRIx64 "\n",
+						function, store_descriptor->index, temp_block_descriptor->overlay->offset);
+					goto on_error;
+				}
+				/* Change the overlay descriptor's flag to 4 ('Unused') and clear it's offsets
+				 * I'm not sure if setting the relative offset to 0 is considered acceptable or not (for an unused descriptor)
+				 */
+				memory_set(descriptor_buffer, 0, 32);
+				descriptor_buffer[24] = 0x04;
+				libbfio_handle_seek_offset(file_io_handle, temp_block_descriptor->overlay->descriptor_location, SEEK_SET, error);
+				if (libbfio_handle_write_buffer(file_io_handle, descriptor_buffer, 32, error) != 32)
+				{
+					libcnotify_printf("%s: store: %02d error clearing overlay descriptor at: 0x%08" PRIx64 "\n",
+						function, store_descriptor->index, temp_block_descriptor->overlay->descriptor_location);
+					goto on_error;
+				}
+				/* Remove the overlay pointer from the regular descriptors stuct
+				 */
+				temp_block_descriptor->overlay = NULL;
+				
+#if defined( HAVE_DEBUG_OUTPUT )
+				if( libcnotify_verbose != 0 )
+				{
+					libcnotify_printf(
+						"%s: just cleared overlay for existing block with the overlay's offset = %" PRIx64 " overlay's descriptor location = %" PRIx64 "\n",
+						function, temp_block_descriptor->overlay->offset, temp_block_descriptor->overlay->descriptor_location);
+				}
+#endif
+			}
+		}
+		
+		/* Else, we are writing less than 16K
+		 */
+		else
+		{
+#if defined( HAVE_DEBUG_OUTPUT )
+			if( libcnotify_verbose != 0 )
+			{
+				libcnotify_printf(
+					"%s: writing less than 16K with existing block\n",
+					function);
+			}
+#endif
+			
+			/* If the current block is a regular block and doesn't have an overlay, just write the new data (partially) over the old data
+			 */
+			if (temp_block_descriptor->flags == 0 && temp_block_descriptor->overlay == NULL)
+			{
+				libbfio_handle_seek_offset(file_io_handle, temp_block_descriptor->offset + (offset % 16384), SEEK_SET, error);
+				if (libbfio_handle_write_buffer(file_io_handle, buffer, write_size, error) != write_size)
+				{
+					libcnotify_printf("%s: store: %02d error writing partial 16K chunk over existing descriptor data at: 0x%08" PRIx64 "\n",
+						function, store_descriptor->index, temp_block_descriptor->offset + (offset % 16384));
+					goto on_error;
+				}
+#if defined( HAVE_DEBUG_OUTPUT )
+				if( libcnotify_verbose != 0 )
+				{
+					libcnotify_printf(
+						"%s: existing block was regular with no overlay. Writing data to offset = %" PRIx64 "\n",
+						function, temp_block_descriptor->offset + (offset % 16384));
+				}
+#endif
+			}
+			/* Else, if the current block is a regular block that also already has an overlay,
+			 * then merge the current overlay on to the current regular block and write the new data over the (now merged) regular block data.
+			 * This is done so we don't get bits of inter-snapshot data left behind in the regular block.
+			 */
+			else if (temp_block_descriptor->flags == 0 && temp_block_descriptor->overlay != NULL)
+			{
+#if defined( HAVE_DEBUG_OUTPUT )
+				if( libcnotify_verbose != 0 )
+				{
+					libcnotify_printf(
+						"%s: existing block was regular with an overlay. Going to read data from offset, then write back.\n",
+						function);
+				}
+#endif
+				/* So the easiest way to get the merged data is just to read that 16K from the snapshot like normal
+				 */
+				if (libvshadow_store_descriptor_read_buffer(
+					store_descriptor, file_io_handle,
+					data_buffer, 0x4000, 
+					temp_block_descriptor->original_offset,
+					active_store_descriptor, error) != 0x4000)
+				{
+					libcnotify_printf("%s: store: %02d error reading 16K chunk from (original offset): 0x%08" PRIx64 " so we can merge overlays during write\n",
+						function, store_descriptor->index, temp_block_descriptor->original_offset);
+					goto on_error;
+				}
+				
+				/* Write the updated data to the regular blocks offset
+				 */
+				memory_copy(data_buffer + (offset % 16384), buffer, write_size);
+				libbfio_handle_seek_offset(file_io_handle, temp_block_descriptor->offset, SEEK_SET, error);
+				if (libbfio_handle_write_buffer(file_io_handle, data_buffer, 16384, error) != 16384)
+				{
+					libcnotify_printf("%s: store: %02d error writing merged 16K chunk over existing descriptor data at: 0x%08" PRIx64 "\n",
+						function, store_descriptor->index, temp_block_descriptor->offset);
+					goto on_error;
+				}
+				/* Now clear the overlay block that we don't need anymore
+				 */
+				memory_set(descriptor_buffer, 0, 32);
+				descriptor_buffer[24] = 0x04;
+				libbfio_handle_seek_offset(file_io_handle, temp_block_descriptor->overlay->descriptor_location, SEEK_SET, error);
+				if (libbfio_handle_write_buffer(file_io_handle, descriptor_buffer, 32, error) != 32)
+				{
+					libcnotify_printf("%s: store: %02d error clearing overlay descriptor at: 0x%08" PRIx64 "\n",
+						function, store_descriptor->index, temp_block_descriptor->overlay->descriptor_location);
+					goto on_error;
+				}
+				/* Remove the overlay pointer from the regular descriptors stuct
+				 */
+				temp_block_descriptor->overlay = NULL;
+			}
+			/* Else, the current block is either an overlay or a forwarder (or unkown, which we'll write over with an overlay)
+			 */
+			else
+			{
+#if defined( HAVE_DEBUG_OUTPUT )
+				if( libcnotify_verbose != 0 )
+				{
+					libcnotify_printf(
+						"%s: existing block was either overlay or forwarded (or unknown)\n",
+						function);
+				}
+#endif
+				
+				/* First, grab the current data
+				 */
+				if (libvshadow_store_descriptor_read_buffer(
+					store_descriptor, file_io_handle,
+					data_buffer, 0x4000, 
+					temp_block_descriptor->original_offset,
+					active_store_descriptor, error) != 0x4000)
+				{
+					libcnotify_printf("%s: store: %02d error reading 16K chunk from (original offset): 0x%08" PRIx64 " so we can merge new data into current overlay or replace forwarder\n",
+						function, store_descriptor->index, temp_block_descriptor->original_offset);
+					goto on_error;
+				}
+				/* Copy the new data over it
+				 */
+				memory_copy(data_buffer + (offset % 16384), buffer, write_size);
+				/* Create a bitmap for the new data
+				 */
+				overlay_bitmap = 0;
+				for (i = (offset % 0x4000) / 512; i <= ((offset % 0x4000) + write_size - 1) / 512; i++)
+				{
+					overlay_bitmap += ((uint32_t)1) << ((7 - (i % 8)) + (i / 8) * 8);
+				}
+				/* If this is a forwarder block, allocate some disk space for it
+				 */
+				if (temp_block_descriptor->offset == 0)
+				{
+#if defined( HAVE_DEBUG_OUTPUT )
+					if( libcnotify_verbose != 0 )
+					{
+						libcnotify_printf(
+							"%s: Found block descriptor had offset = 0. Finding space for data, setting offset and changing descriptor type to overlay.\n",
+							function);
+					}
+#endif
+					temp_block_descriptor->offset = libvshadow_store_run_get_next_free(&(store_descriptor->store_runs), error);
+					if (temp_block_descriptor->offset == 0)
+					{
+						libcnotify_printf("%s: store: %02d Couldn't get free address for converting a forwader block at  0x%08" PRIx64 "to a normal block\n",
+							function, store_descriptor->index, temp_block_descriptor->descriptor_location);
+						goto on_error;
+					}
+					temp_block_descriptor->relative_offset = temp_block_descriptor->offset - store_descriptor->store_header_offset;
+					/* Write the new addresses to disk
+					 */
+					memory_set(descriptor_buffer, 0, 32);
+					descriptor_buffer[20] = 0x02;
+					memory_copy(descriptor_buffer + 8, &temp_block_descriptor->relative_offset, 8);
+					memory_copy(descriptor_buffer + 16, &temp_block_descriptor->offset, 8);
+					libbfio_handle_seek_offset(file_io_handle, temp_block_descriptor->descriptor_location + 8, SEEK_SET, error);
+					if (libbfio_handle_write_buffer(file_io_handle, descriptor_buffer + 8, 20, error) != 20)
+					{
+						libcnotify_printf("%s: store: %02d error writing new offsets to probable forwarder block at: 0x%08" PRIx64 "\n",
+							function, store_descriptor->index, temp_block_descriptor->descriptor_location);
+						goto on_error;
+					}
+				}
+				
+				/* Force the block to be an overlay
+				 */
+				temp_block_descriptor->flags = 2;
+				
+				/* Merge the new and existing bitmaps and write the merged bitmap to disk
+				 */
+				if (temp_block_descriptor->overlay != NULL)
+				{
+					/* If this is an unknown (or something) and has an overlay itself, copy the overlay's bitmap for later user
+					 */
+					overlay_bitmap |= temp_block_descriptor->overlay->bitmap;
+					libcnotify_printf(
+						"%s: current descriptor has an overlay, merging that overlay's bitmap into new bitmap. overlay's bitmap: %x\n",
+						function, temp_block_descriptor->overlay->bitmap);
+				}
+#if defined( HAVE_DEBUG_OUTPUT )
+				if( libcnotify_verbose != 0 )
+				{
+					libcnotify_printf(
+						"%s: old bitmap: %x new data bitmap: %x combined bitmap: %x\n",
+						function, temp_block_descriptor->bitmap, overlay_bitmap , temp_block_descriptor->bitmap | overlay_bitmap);
+				}
+#endif
+				temp_block_descriptor->bitmap |= overlay_bitmap;
+				memory_copy(descriptor_buffer + 28, &temp_block_descriptor->bitmap, 4);
+				memory_copy(descriptor_buffer + 24, &temp_block_descriptor->flags, 4); /* force flag to be overlay */
+				libbfio_handle_seek_offset(file_io_handle, temp_block_descriptor->descriptor_location + 24, SEEK_SET, error);
+				if (libbfio_handle_write_buffer(file_io_handle, descriptor_buffer + 24, 8, error) != 8)
+				{
+					libcnotify_printf("%s: store: %02d error writing new offsets to probable forwarder block at: 0x%08" PRIx64 "\n",
+						function, store_descriptor->index, temp_block_descriptor->descriptor_location);
+					goto on_error;
+				}
+				/* Zero out the parts of the 16K overlay data that isn't being updated/overlayed
+				 */
+				for (i = 0; i < 32; i++)
+				{
+					if ( (temp_block_descriptor->bitmap & ( ((uint32_t)1) << i )) == 0 )
+					{
+						memory_set(data_buffer + (i * 512), 0, 512);
+					}
+				}
+				
+#if defined( HAVE_DEBUG_OUTPUT )
+				if( libcnotify_verbose != 0 )
+				{
+					libcnotify_printf(
+						"%s: writing merged data to disk at offset 0x%08" PRIx64 "\n",
+						function, temp_block_descriptor->offset);
+				}
+#endif
+				/* Write out the 16K of data
+				 */
+				libbfio_handle_seek_offset(file_io_handle, temp_block_descriptor->offset, SEEK_SET, error);
+				if (libbfio_handle_write_buffer(file_io_handle, data_buffer, 16384, error) != 16384)
+				{
+					libcnotify_printf("%s: store: %02d error writing new merged overlay data to offset: 0x%08" PRIx64 "\n",
+						function, store_descriptor->index, temp_block_descriptor->offset);
+					goto on_error;
+				}
+				/* If the existing block itself has an overlay, clear that out
+				 */
+				if (temp_block_descriptor->overlay != NULL)
+				{
+#if defined( HAVE_DEBUG_OUTPUT )
+					if( libcnotify_verbose != 0 )
+					{
+						libcnotify_printf(
+							"%s: Clearing out overlay for existing block descriptor\n",
+							function);
+					}
+#endif
+					/* Write over the overlay's data
+					 */
+					memory_set(data_buffer, 0, 16384);
+					libbfio_handle_seek_offset(file_io_handle, temp_block_descriptor->overlay->offset, SEEK_SET, error);
+					if (libbfio_handle_write_buffer(file_io_handle, data_buffer, 16384, error) != 16384)
+					{
+						libcnotify_printf("%s: store: %02d error writing over overlay block descriptor's data at: 0x%08" PRIx64 "\n",
+							function, store_descriptor->index, temp_block_descriptor->overlay->offset);
+						goto on_error;
+					}
+					/* Change the overlay descriptor's flag to 4 ('Unused') and clear it's offsets
+					 * I'm not sure if setting the relative offset to 0 is considered acceptable or not (for an unused descriptor)
+					 */
+					memory_set(descriptor_buffer, 0, 32);
+					descriptor_buffer[24] = 0x04;
+					libbfio_handle_seek_offset(file_io_handle, temp_block_descriptor->overlay->descriptor_location, SEEK_SET, error);
+					if (libbfio_handle_write_buffer(file_io_handle, descriptor_buffer, 32, error) != 32)
+					{
+						libcnotify_printf("%s: store: %02d error clearing overlay descriptor at: 0x%08" PRIx64 "\n",
+							function, store_descriptor->index, temp_block_descriptor->overlay->descriptor_location);
+						goto on_error;
+					}
+					/* Remove the overlay pointer from the regular descriptors stuct
+					 */
+					temp_block_descriptor->overlay = NULL;
+				}
+				
+#if defined( HAVE_DEBUG_OUTPUT )
+				if( libcnotify_verbose != 0 )
+				{
+					libcnotify_printf(
+						"%s: finished writing partial data over existing overlay or forwarder (or unknown, hopefully it will be fine)\n",
+						function);
+				}
+#endif
+			} /* end writing over overlay or forwarder */
+		} /* end writing less than 16K */
+	} /* end offset has existing block */
+	
+	/* Else, offset doesn't have a block descriptor yet, create a new one
+	 */
+	else
+	{
+#if defined( HAVE_DEBUG_OUTPUT )
+		if( libcnotify_verbose != 0 )
+		{
+			libcnotify_printf(
+				"%s: No existing block was found, creating a new one\n",
+				function);
+		}
+#endif
+		
+		/* First we check if there is space for a new descriptor in the current last block
+		 * We grab the last block descriptor and check which block descriptor number it is
+		 */
+		libcdata_list_get_last_element(store_descriptor->block_descriptors_list, &last_descriptor_element, error);
+		libcdata_list_element_get_value(last_descriptor_element, (intptr_t **) &temp_block_descriptor, error);
+		if (temp_block_descriptor->list_entry_number >= 507)
+		{
+#if defined( HAVE_DEBUG_OUTPUT )
+			if( libcnotify_verbose != 0 )
+			{
+				libcnotify_printf(
+					"%s: last block descriptor in list had entry number 507, creating a new block\n",
+					function);
+			}
+#endif
+			
+			/* Each block list block can store 508 entries.
+			 * If it's full, we need to create a new store block.
+			 * list_entry_number starts at 0, fyi
+			 */
+			
+			/* Find the last block list block, so we can copy the header info to the new block we're creating
+			 * and so we can update the address of the next block to the new one we're creating
+			 */
+			libcdata_list_get_last_element(store_descriptor->block_list, &temp_block_element2, error);
+			while (temp_block_element2)
+			{
+				temp_block_element = temp_block_element2;
+				libcdata_list_element_get_value(temp_block_element, (intptr_t **) &temp_block, error);
+				if (temp_block->record_type == 3)
+                {
+					break;
+                }
+				libcdata_list_element_get_previous_element(temp_block_element, &temp_block_element2, error);
+			}
+			
+			/* We're not going to be storing descriptors in this block in memory, so data section just needs to hold the header info (128 bytes)
+			 */
+			libvshadow_store_block_initialize(&new_block, 128, error);
+			memory_copy(new_block->data, temp_block->data, 128);
+			
+			/* Get a free address for the new block on disk
+			 */
+			temp_offset1 = libvshadow_store_run_get_next_free(&(store_descriptor->store_runs), error);
+			memory_copy(new_block->data + 32, &temp_offset1, 8);
+			new_block->offset = temp_offset1;
+			if (new_block->offset == 0)
+			{
+				libcnotify_printf("%s: store: %02d Couldn't get free address for a new block\n",
+					function, store_descriptor->index);
+				goto on_error;
+			}
+			
+			/* Update the next block address in the last block
+			 */
+            temp_block->next_offset = temp_block->offset;
+			libbfio_handle_seek_offset(file_io_handle, temp_block->offset + 40, SEEK_SET, error);
+			if (libbfio_handle_write_buffer(file_io_handle, (uint8_t*)&temp_offset1, 8, error) != 8)
+			{
+				libcnotify_printf("%s: store: %02d Error updating block next block at: 0x%08" PRIx64 "\n",
+					function, store_descriptor->index, temp_block->offset + 40);
+				goto on_error;
+			}
+			
+			/* Figure out what the relative offset is and update the new block with it
+			 */
+			new_block->relative_offset = new_block->offset - (temp_block->offset - temp_block->relative_offset);
+			memory_copy(new_block->data + 24, &(new_block->relative_offset), 8);
+			
+            /* Fill in the record type on the new block
+             */
+            new_block->data[20] = 3;
+            new_block->record_type = 3;
+            
+			/* Write the new block to disk
+			 */
+			memory_set(data_buffer, 0, 16384);
+			memory_copy(data_buffer, new_block->data, 128);
+			libbfio_handle_seek_offset(file_io_handle, new_block->offset, SEEK_SET, error);
+			if (libbfio_handle_write_buffer(file_io_handle, data_buffer, 16384, error) != 16384)
+			{
+				libcnotify_printf("%s: store: %02d Error writing new block at: 0x%08" PRIx64 "\n",
+					function, store_descriptor->index, new_block->offset);
+				goto on_error;
+			}
+			
+			/* Add the new block to the block list
+			 */
+			if( libcdata_list_append_value(
+			     store_descriptor->block_list,
+			     (intptr_t *) new_block,
+			     error ) != 1 )
+			{
+				libcerror_error_set(
+				 error,
+				 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+				 LIBCERROR_RUNTIME_ERROR_APPEND_FAILED,
+				 "%s: unable to append new block to list.",
+				 function );
+
+				goto on_error;
+			}
+			
+#if defined( HAVE_DEBUG_OUTPUT )
+			if( libcnotify_verbose != 0 )
+			{
+				libcnotify_printf(
+					"%s: new block written to offset = %" PRIx64 "\n",
+					function, new_block->offset);
+			}
+#endif
+			
+			next_descriptor_address = new_block->offset + 128;
+		}
+		else
+			next_descriptor_address = temp_block_descriptor->descriptor_location + 32;
+		
+		/* Now we get to actually create the new block descriptor
+		 */
+		libvshadow_block_descriptor_initialize(&new_block_descriptor, error);
+		new_block_descriptor->descriptor_location = next_descriptor_address;
+		new_block_descriptor->original_offset = offset - (offset % 16384);
+		/*
+		new_block_descriptor->index = temp_block_descriptor->index + 1;
+		new_block_descriptor->reverse_index = temp_block_descriptor->reverse_index + 1;
+		 */
+		new_block_descriptor->offset = libvshadow_store_run_get_next_free(&(store_descriptor->store_runs), error);
+		if (new_block_descriptor->offset == 0)
+		{
+				libcnotify_printf("%s: store: %02d Couldn't get free address for new block descriptor data at original offset 0x%08" PRIx64 "\n",
+					function, store_descriptor->index, new_block_descriptor->original_offset);
+				libvshadow_block_descriptor_free(&new_block_descriptor, error);
+				goto on_error;
+		}
+		new_block_descriptor->relative_offset = new_block_descriptor->offset - (temp_block_descriptor->offset - temp_block_descriptor->relative_offset);
+		if (temp_block_descriptor->list_entry_number == 507)
+			new_block_descriptor->list_entry_number = 0;
+		else
+			new_block_descriptor->list_entry_number = temp_block_descriptor->list_entry_number + 1;
+		if (write_size == 16384)
+		{
+			new_block_descriptor->flags = 0;
+			memory_copy(data_buffer, buffer, 16384);
+		}
+		else
+		{
+			new_block_descriptor->flags = 2;
+			/* First, grab the current data
+			 */
+			if (libvshadow_store_descriptor_read_buffer(
+				store_descriptor, file_io_handle,
+				data_buffer, 0x4000, 
+				new_block_descriptor->original_offset,
+				active_store_descriptor, error) != 0x4000)
+			{
+				libcnotify_printf("%s: store: %02d error reading 16K chunk from (original offset): 0x%08" PRIx64 " so we can create a new overlay for it\n",
+					function, store_descriptor->index, new_block_descriptor->original_offset);
+				goto on_error;
+			}
+			
+			/* Copy the new data over it
+			 */
+			memory_copy(data_buffer + (offset % 16384), buffer, write_size);
+
+			/* Create a bitmap for the new data
+			 */
+			new_block_descriptor->bitmap = 0;
+			for (i = (offset % 0x4000) / 512; i <= ((offset % 0x4000) + write_size - 1) / 512; i++)
+			{
+				new_block_descriptor->bitmap += ((uint32_t)1) << ((7 - (i % 8)) + (i / 8) * 8);
+			}
+			/* Zero out the parts of the 16K overlay data that isn't being overlayed
+			 */
+			for (i = 0; i < 32; i++)
+			{
+				if ( (new_block_descriptor->bitmap & ( ((uint32_t)1) << i )) == 0 )
+				{
+					memory_set(data_buffer + (i * 512), 0, 512);
+				}
+			}
+		}
+		/* Now we write the data buffer to disk
+		 */
+		libbfio_handle_seek_offset(file_io_handle, new_block_descriptor->offset, SEEK_SET, error);
+		if (libbfio_handle_write_buffer(file_io_handle, data_buffer, 16384, error) != 16384)
+		{
+			libcnotify_printf("%s: store: %02d error writing new data to 0x%08" PRIx64 " with original offset of 0x%08" PRIx64 "\n",
+				function, store_descriptor->index, new_block_descriptor->offset, new_block_descriptor->original_offset);
+			goto on_error;
+		}
+		
+		/* And write the new block descriptor to disk
+		 */
+		memcpy(descriptor_buffer + 0, (void*)&(new_block_descriptor->original_offset), 8);
+		memcpy(descriptor_buffer + 8, (void*)&(new_block_descriptor->relative_offset), 8);
+		memcpy(descriptor_buffer + 16, (void*)&(new_block_descriptor->offset), 8);
+		memcpy(descriptor_buffer + 24, (void*)&(new_block_descriptor->flags), 4);
+		memcpy(descriptor_buffer + 28, (void*)&(new_block_descriptor->bitmap), 4);
+		libbfio_handle_seek_offset(file_io_handle, new_block_descriptor->descriptor_location, SEEK_SET, error);
+		if (libbfio_handle_write_buffer(file_io_handle, descriptor_buffer, 32, error) != 32)
+		{
+			libcnotify_printf("%s: store: %02d error writing new block descriptor to offset: 0x%08" PRIx64 "\n",
+				function, store_descriptor->index, new_block_descriptor->descriptor_location);
+			goto on_error;
+		} 
+		
+		/* Add the new block descriptor to the trees and list
+		 */
+		libvshadow_block_tree_insert(
+							 store_descriptor->forward_block_descriptors_tree,
+							 store_descriptor->reverse_block_descriptors_tree,
+							 new_block_descriptor,
+							 store_descriptor->index,
+							 error );
+		libcdata_list_append_value(
+							 store_descriptor->block_descriptors_list,
+							 (intptr_t *) new_block_descriptor,
+							 error );
+							 
+#if defined( HAVE_DEBUG_OUTPUT )
+		if( libcnotify_verbose != 0 )
+		{
+			libcnotify_printf(
+				"%s: new descriptor written to 0x%08" PRIx64 " new data written to %" PRIx64 "\n",
+				function, new_block_descriptor->descriptor_location, new_block_descriptor->offset);
+		}
+#endif
+	}
+
+    /* done, return the size written to disk */
+    return write_size;
+    
+    on_error:
+    /*
+    #if defined( HAVE_LIBVSHADOW_MULTI_THREAD_SUPPORT )
+        libcthreads_read_write_lock_release_for_read(store_descriptor->read_write_lock, NULL);
+    #endif
+    */
+    #if defined( HAVE_DEBUG_OUTPUT )
+        if( libcnotify_verbose != 0 )
+            libcnotify_printf(
+             "%s: got a \"goto on_error\", about to exit with -1\n",
+             function);
+    #endif
+    
+    return( -1 );
 }
 
 /* Retrieves the volume size

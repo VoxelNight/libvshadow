@@ -89,7 +89,7 @@ void usage_fprint(
 	                 "volume\n\n" );
 
 	fprintf( stream, "Usage: vshadowmount [ -o offset ] [ -X extended_options ]\n"
-	                 "                    [ -hvV ] source mount_point\n\n" );
+	                 "                    [ -hvVW ] [ -S min_free_space ] source mount_point\n\n" );
 
 	fprintf( stream, "\tsource:      the source file or device\n" );
 	fprintf( stream, "\tmount_point: the directory to serve as mount point\n\n" );
@@ -100,6 +100,8 @@ void usage_fprint(
 	                 "\t             vshadowmount will remain running in the foreground\n" );
 	fprintf( stream, "\t-V:          print version\n" );
 	fprintf( stream, "\t-X:          extended options to pass to sub system\n" );
+	fprintf( stream, "\t-W:          enable super experimental write support\n" );
+	fprintf( stream, "\t-S:          specify the minimum amount of free space (in megabytes) that should be present when a snapshot is mounted\n" );
 }
 
 /* Signal handler for vshadowmount
@@ -165,6 +167,8 @@ int vshadowmount_fuse_open(
 	static char *function    = "vshadowmount_fuse_open";
 	size_t path_length       = 0;
 	int result               = 0;
+	int store_index          = 0;
+	int string_index         = 0;
 
 	if( path == NULL )
 	{
@@ -213,19 +217,93 @@ int vshadowmount_fuse_open(
 
 		goto on_error;
 	}
-	if( ( file_info->flags & 0x03 ) != O_RDONLY )
+	
+	string_index = vshadowmount_fuse_path_prefix_length;
+
+	store_index = path[ string_index++ ] - '0';
+
+	if( string_index < (int) path_length )
+	{
+		store_index *= 10;
+		store_index += path[ string_index++ ] - '0';
+	}
+	if( string_index < (int) path_length )
+	{
+		store_index *= 10;
+		store_index += path[ string_index++ ] - '0';
+	}
+	store_index -= 1;
+    
+	
+	/* Make sure we don't read too far
+	 */
+	libcnotify_printf(
+		 "%s: store_index = %d our of %d\n",
+		 function, store_index, vshadowmount_mount_handle->number_of_inputs);
+
+	if( store_index >= vshadowmount_mount_handle->number_of_inputs)
 	{
 		libcerror_error_set(
 		 &error,
 		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
 		 LIBCERROR_RUNTIME_ERROR_UNSUPPORTED_VALUE,
-		 "%s: write access currently not supported.",
+		 "%s: Unable to get store entry.",
 		 function );
 
 		result = -EACCES;
 
 		goto on_error;
 	}
+	
+	if( vshadowmount_mount_handle->write_enabled == 0 && ( file_info->flags & 0x03 ) != O_RDONLY )
+	{
+		libcerror_error_set(
+		 &error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_RUNTIME_ERROR_UNSUPPORTED_VALUE,
+		 "%s: write access is not enabled.",
+		 function );
+
+		result = -EACCES;
+
+		goto on_error;
+	}
+	else if ( vshadowmount_mount_handle->write_enabled == 1 && ( file_info->flags & 0x03 ) != O_RDONLY )
+	{
+		/* Sort of feels like this logic should be somewhere else
+		 */
+		if( vshadowmount_mount_handle->inputs[ store_index ] == NULL )
+		{
+			if( libvshadow_volume_get_store(
+				 vshadowmount_mount_handle->input_volume,
+				 store_index,
+				 &( vshadowmount_mount_handle->inputs[ store_index ] ),
+				 &error ) != 1 )
+			{
+				libcerror_error_set(
+				 &error,
+				 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+				 LIBCERROR_RUNTIME_ERROR_VALUE_OUT_OF_BOUNDS,
+				 "%s: unable to retrieve input store: %d from input volume.",
+				 function,
+				 store_index );
+
+				result = -EACCES;
+
+				goto on_error;
+			}
+		}
+
+		if (libvshadow_store_find_free_space(vshadowmount_mount_handle->inputs[store_index], vshadowmount_mount_handle->volume_filename, vshadowmount_mount_handle->min_free_space, &error) != 0)
+		{
+			/* Todo: Do error handling stuff correctly here
+			 */
+			libcnotify_printf(
+				 "%s: Error: Find free space did not return 0.\n",
+				 function);
+		}
+	}
+	
 	return( 0 );
 
 on_error:
@@ -384,6 +462,151 @@ on_error:
 	return( result );
 }
 
+/* Writes a buffer of data to the specified offset
+ * Returns number of bytes written if successful or a negative errno value otherwise
+ */
+int vshadowmount_fuse_write(
+     const char *path,
+     const char *buffer,
+     size_t size,
+     off_t offset,
+     struct fuse_file_info *file_info )
+{
+	libcerror_error_t *error = NULL;
+	static char *function    = "vshadowmount_fuse_write";
+	size_t path_length       = 0;
+	ssize_t write_count      = 0;
+	int result               = 0;
+	int store_index          = 0;
+	int string_index         = 0;
+
+	if( path == NULL )
+	{
+		libcerror_error_set(
+		 &error,
+		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+		 LIBCERROR_ARGUMENT_ERROR_INVALID_VALUE,
+		 "%s: invalid path.",
+		 function );
+
+		result = -EINVAL;
+
+		goto on_error;
+	}
+	if( size > (size_t) INT_MAX )
+	{
+		libcerror_error_set(
+		 &error,
+		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+		 LIBCERROR_ARGUMENT_ERROR_VALUE_EXCEEDS_MAXIMUM,
+		 "%s: invalid size value exceeds maximum.",
+		 function );
+
+		result = -EINVAL;
+
+		goto on_error;
+	}
+	if( file_info == NULL )
+	{
+		libcerror_error_set(
+		 &error,
+		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+		 LIBCERROR_ARGUMENT_ERROR_INVALID_VALUE,
+		 "%s: invalid file info.",
+		 function );
+
+		result = -EINVAL;
+
+		goto on_error;
+	}
+	path_length = narrow_string_length(
+	               path );
+
+	if( ( path_length <= vshadowmount_fuse_path_prefix_length )
+	 || ( path_length > ( vshadowmount_fuse_path_prefix_length + 3 ) )
+	 || ( narrow_string_compare(
+	       path,
+	       vshadowmount_fuse_path_prefix,
+	       vshadowmount_fuse_path_prefix_length ) != 0 ) )
+	{
+		libcerror_error_set(
+		 &error,
+		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+		 LIBCERROR_ARGUMENT_ERROR_UNSUPPORTED_VALUE,
+		 "%s: unsupported path.",
+		 function );
+
+		result = -ENOENT;
+
+		goto on_error;
+	}
+	string_index = vshadowmount_fuse_path_prefix_length;
+
+	store_index = path[ string_index++ ] - '0';
+
+	if( string_index < (int) path_length )
+	{
+		store_index *= 10;
+		store_index += path[ string_index++ ] - '0';
+	}
+	if( string_index < (int) path_length )
+	{
+		store_index *= 10;
+		store_index += path[ string_index++ ] - '0';
+	}
+	store_index -= 1;
+
+	if( mount_handle_seek_offset(
+	     vshadowmount_mount_handle,
+	     store_index,
+	     (off64_t) offset,
+	     SEEK_SET,
+	     &error ) == -1 )
+	{
+		libcerror_error_set(
+		 &error,
+		 LIBCERROR_ERROR_DOMAIN_IO,
+		 LIBCERROR_IO_ERROR_SEEK_FAILED,
+		 "%s: unable to seek offset in mount handle.",
+		 function );
+
+		result = -EIO;
+
+		goto on_error;
+	}
+	write_count = mount_handle_write_buffer(
+	              vshadowmount_mount_handle,
+	              store_index,
+	              (uint8_t *) buffer,
+	              size,
+	              &error );
+
+	if( write_count == -1 )
+	{
+		libcerror_error_set(
+		 &error,
+		 LIBCERROR_ERROR_DOMAIN_IO,
+		 LIBCERROR_IO_ERROR_READ_FAILED,
+		 "%s: unable to write to mount handle.",
+		 function );
+
+		result = -EIO;
+
+		goto on_error;
+	}
+	return( (int) write_count );
+
+on_error:
+	if( error != NULL )
+	{
+		libcnotify_print_error_backtrace(
+		 error );
+		libcerror_error_free(
+		 &error );
+	}
+	return( result );
+}
+
 /* Sets the values in a stat info structure
  * Returns 1 if successful or -1 on error
  */
@@ -444,12 +667,12 @@ int vshadowmount_fuse_set_stat_info(
 	}
 	if( number_of_sub_items > 0 )
 	{
-		stat_info->st_mode  = S_IFDIR | 0555;
+		stat_info->st_mode  = S_IFDIR | 0775;
 		stat_info->st_nlink = 2;
 	}
 	else
 	{
-		stat_info->st_mode  = S_IFREG | 0444;
+		stat_info->st_mode  = S_IFREG | 0664;
 		stat_info->st_nlink = 1;
 	}
 #if defined( HAVE_GETEUID )
@@ -2048,11 +2271,13 @@ int main( int argc, char * const argv[] )
 	system_character_t *mount_point              = NULL;
 	system_character_t *option_extended_options  = NULL;
 	system_character_t *option_volume_offset     = NULL;
+	system_character_t *option_min_free_space    = NULL;
 	system_character_t *source                   = NULL;
 	char *program                                = "vshadowmount";
 	system_integer_t option                      = 0;
 	int result                                   = 0;
 	int verbose                                  = 0;
+	int write_enabled                                      = 0;
 
 #if defined( HAVE_LIBFUSE ) || defined( HAVE_LIBOSXFUSE )
 	struct fuse_operations vshadowmount_fuse_operations;
@@ -2099,7 +2324,7 @@ int main( int argc, char * const argv[] )
 	while( ( option = libcsystem_getopt(
 	                   argc,
 	                   argv,
-	                   _SYSTEM_STRING( "ho:vVX:" ) ) ) != (system_integer_t) -1 )
+	                   _SYSTEM_STRING( "ho:vVX:WS:" ) ) ) != (system_integer_t) -1 )
 	{
 		switch( option )
 		{
@@ -2139,6 +2364,16 @@ int main( int argc, char * const argv[] )
 
 			case (system_integer_t) 'X':
 				option_extended_options = optarg;
+
+				break;
+				
+			case (system_integer_t) 'W':
+				write_enabled = 1;
+
+				break;
+				
+			case (system_integer_t) 'S':
+				option_min_free_space = optarg;
 
 				break;
 		}
@@ -2205,6 +2440,37 @@ int main( int argc, char * const argv[] )
 			 vshadowmount_mount_handle->volume_offset );
 		}
 	}
+	
+	/* We save the filename in the mount_handle so we can pull it out later to find file runs (using libntfs3g)
+	 */
+	vshadowmount_mount_handle->volume_filename = source;
+	
+	/* Whether we are mounting read-write or read-only is saved and later used in multiple places
+	 */
+	vshadowmount_mount_handle->write_enabled = write_enabled;
+	
+	/* Minimum amount of free space to guarantee when mounting a snapshot with write support
+	 * The user supplies this number in megabytes. We convert to bytes.
+	 */
+	if( option_min_free_space != NULL )
+	{
+		if( mount_handle_set_min_free_space(
+		     vshadowmount_mount_handle,
+		     option_min_free_space,
+		     &error ) != 1 )
+		{
+			libcnotify_print_error_backtrace(
+			 error );
+			libcerror_error_free(
+			 &error );
+
+			fprintf(
+			 stderr,
+			 "Invalid minimum free space defaulting to: %" PRIu64 ".\n",
+			 vshadowmount_mount_handle->min_free_space );
+		}
+	}
+	
 	result = mount_handle_open_input(
 	          vshadowmount_mount_handle,
 	          source,
@@ -2276,6 +2542,8 @@ int main( int argc, char * const argv[] )
 	}
 	vshadowmount_fuse_operations.open    = &vshadowmount_fuse_open;
 	vshadowmount_fuse_operations.read    = &vshadowmount_fuse_read;
+    if (write_enabled)
+        vshadowmount_fuse_operations.write   = &vshadowmount_fuse_write;
 	vshadowmount_fuse_operations.readdir = &vshadowmount_fuse_readdir;
 	vshadowmount_fuse_operations.getattr = &vshadowmount_fuse_getattr;
 	vshadowmount_fuse_operations.destroy = &vshadowmount_fuse_destroy;

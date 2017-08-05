@@ -26,6 +26,7 @@
 #include <types.h>
 
 #include "libvshadow_block_descriptor.h"
+#include "libvshadow_store_runs.h"
 #include "libvshadow_libbfio.h"
 #include "libvshadow_libcdata.h"
 #include "libvshadow_libcerror.h"
@@ -102,6 +103,10 @@ struct libvshadow_store_descriptor
 	 */
 	uint16_t service_machine_string_size;
 
+	/* The block list
+	 */
+	libcdata_list_t *block_list;
+
 	/* The block descriptors list
 	 */
 	libcdata_list_t *block_descriptors_list;
@@ -141,6 +146,14 @@ struct libvshadow_store_descriptor
 	/* Value to indicate the block descriptors have been read
 	 */
 	uint8_t block_descriptors_read;
+
+	/* Inode number for the file store
+	 */
+	uint64_t store_inode;
+	
+	/* Data runs, only used for writes
+	 */
+	libvshadow_store_run_t *store_runs;
 
 #if defined( HAVE_LIBVSHADOW_MULTI_THREAD_SUPPORT )
 	/* The read/write lock
@@ -212,6 +225,15 @@ int libvshadow_store_descriptor_read_block_descriptors(
      libcerror_error_t **error );
 
 ssize_t libvshadow_store_descriptor_read_buffer(
+         libvshadow_store_descriptor_t *store_descriptor,
+         libbfio_handle_t *file_io_handle,
+         uint8_t *buffer,
+         size_t buffer_size,
+         off64_t offset,
+         libvshadow_store_descriptor_t *active_store_descriptor,
+         libcerror_error_t **error );
+
+ssize_t libvshadow_store_descriptor_write_buffer(
          libvshadow_store_descriptor_t *store_descriptor,
          libbfio_handle_t *file_io_handle,
          uint8_t *buffer,

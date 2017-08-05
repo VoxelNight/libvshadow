@@ -30,10 +30,16 @@
 #include "libvshadow_libbfio.h"
 #include "libvshadow_libcdata.h"
 #include "libvshadow_libcerror.h"
+#include "libvshadow_libcnotify.h"
 #include "libvshadow_libcthreads.h"
 #include "libvshadow_store.h"
+#include "libvshadow_store_block.h"
 #include "libvshadow_store_descriptor.h"
 #include "libvshadow_volume.h"
+
+#include <ntfs-3g/types.h>
+#include <ntfs-3g/layout.h>
+#include <ntfs-3g/volume.h>
 
 /* Creates a store
  * Make sure the value store is referencing, is set to NULL
@@ -285,6 +291,354 @@ int libvshadow_store_has_in_volume_data(
 		return( -1 );
 	}
 	return( result );
+}
+
+/* Finds data runs in the store file (on the ntfs file system) and allocates more space if needed
+ * Also scans through store blocks and marks space as used in the run bitmaps
+ * This function is not multi-thread safe acquire write lock before call
+ * Returns 0 if no errors occurred, or -1 otherwise
+ */
+int libvshadow_store_find_free_space(
+         libvshadow_store_t *store,
+		 system_character_t *volume_filename,
+		 size64_t desired_free_space,
+         libcerror_error_t **error )
+{
+		static char *function                           = "libvshadow_store_find_free_space";
+		libvshadow_internal_store_t *internal_store     = NULL;
+		libvshadow_store_descriptor_t *store_descriptor = NULL;
+		libvshadow_store_block_t *temp_block = NULL;
+		libcdata_list_element_t *temp_block_element = NULL;
+		libcdata_list_element_t *temp_block_element2 = NULL;
+		libvshadow_store_run_t *store_run_i = NULL;
+		size64_t total_size;
+		size64_t free_size;
+		off64_t block_range_addr = 0;
+		uint8_t new_block_range_block[16256]; /* 16K block, but we leave the 128 byte block header alone */
+		size64_t range_start;
+		off64_t range_relative;
+		size64_t range_size;
+		/* These are from/for ntfs-3g stuff
+		 */
+		ntfs_volume *vol;
+		ntfs_inode *ino = NULL;
+		ntfs_attr_search_ctx *ctx;
+		ATTR_RECORD *rec;
+		ntfs_attr *na;
+		int i;
+		runlist *runs;
+		unsigned int cluster_size;
+		
+		/* Cast the store pointer
+		 */
+		internal_store = (libvshadow_internal_store_t *) store;
+		
+		/* Get the store_descriptor for our store
+		 */
+		if( libcdata_array_get_entry_by_index(
+			 internal_store->internal_volume->store_descriptors_array,
+			 internal_store->store_descriptor_index,
+			 (intptr_t **) &store_descriptor,
+			 error ) != 1 )
+		{
+			libcerror_error_set(
+			 error,
+			 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+			 LIBCERROR_RUNTIME_ERROR_GET_FAILED,
+			 "%s: unable to retrieve store descriptor: %d.",
+			 function,
+			 internal_store->store_descriptor_index );
+
+			return( -1 );
+		}
+	
+		/* Let's find the data runs now
+		 */
+		vol = ntfs_mount(volume_filename, NTFS_MNT_NONE);
+		if (!vol)
+		{
+			libcerror_error_set(
+			 error,
+			 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+			 LIBCERROR_RUNTIME_ERROR_GET_FAILED,
+			 "%s: unable to open the volume to check for runs.",
+			 function);
+
+			return( -1 );
+		}
+		
+		ino = ntfs_inode_open(vol, store_descriptor->store_inode  & 0xffffffffffffUL);
+		if (!ino)
+		{
+			libcerror_error_set(
+			 error,
+			 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+			 LIBCERROR_RUNTIME_ERROR_GET_FAILED,
+			 "%s: unable to open the inode %" PRIu64 " to find data runs.",
+			 function, store_descriptor->store_inode  & 0xffffffffffffUL);
+
+			ntfs_umount(vol, FALSE);
+			return( -1 );
+		}
+
+		/* Grab the cluster size, runs are given in clusters, we need them in bytes
+		 */
+		cluster_size = (unsigned int)vol->cluster_size;
+
+		/* Pull some data out of the inode thing
+		 */
+		ctx = ntfs_attr_get_search_ctx(ino, NULL);
+		while (ntfs_attr_lookup(AT_UNUSED, NULL, 0, 0, 0, NULL, 0, ctx) == 0)
+		{
+			rec = ctx->attr;
+			if (rec->non_resident)
+			{
+				runs = ntfs_mapping_pairs_decompress(vol, rec, NULL);
+				if (runs)
+				{
+					for (i = 0; runs[i].length > 0; i++)
+					{
+#if defined( HAVE_DEBUG_OUTPUT )
+						if( libcnotify_verbose != 0 )
+						{
+							libcnotify_printf("%s: Adding run: VCN: %8lld LCN: %8lld Size: %8lld\n",
+									function,
+									(long long)runs[i].vcn,
+									(long long)runs[i].lcn,
+									(long long)
+									runs[i].length);
+						}
+#endif
+						libvshadow_store_run_add_run(&(store_descriptor->store_runs), (long long)runs[i].lcn * cluster_size, runs[i].length * cluster_size, error);
+					}
+					free(runs);
+				}
+			}
+		}
+
+	total_size = libvshadow_store_run_get_total_size(&(store_descriptor->store_runs), error);
+	free_size = libvshadow_store_run_get_free_size(&(store_descriptor->store_runs), error);
+	
+#if defined( HAVE_DEBUG_OUTPUT )
+	if( libcnotify_verbose != 0 )
+	{
+		libcnotify_printf(
+			"%s: Just finished adding runs. Total size: %" PRIu64 "\n",
+			function, libvshadow_store_run_get_total_size(&(store_descriptor->store_runs), error),
+			libvshadow_store_run_get_free_size(&(store_descriptor->store_runs), error));
+	}
+#endif
+	
+	/* We need to run through the blocks so we can add them to the bitmap
+	 * The libvshadow_store_descriptor_read_block_descriptors function checks if there are runs defined in the store struct
+	 * and marks the block and data locations as used
+	 */
+	if( libvshadow_store_descriptor_read_block_descriptors(
+	     store_descriptor,
+	     internal_store->file_io_handle,
+	     error ) != 1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_IO,
+		 LIBCERROR_IO_ERROR_READ_FAILED,
+		 "%s: unable to read block descriptors.\n",
+		 function );
+
+		return( -1 );
+	}
+	
+	/* Now loop through the store blocks and mark stuff as used as appropriate
+	 */
+	libcdata_list_get_first_element(store_descriptor->block_list, &temp_block_element2, error);
+	while (temp_block_element2)
+	{
+		temp_block_element = temp_block_element2;
+		libcdata_list_element_get_value(temp_block_element, (intptr_t **) &temp_block, error);
+#if defined( HAVE_DEBUG_OUTPUT )
+		if( libcnotify_verbose != 0 )
+		{
+			libcnotify_printf(
+				 "%s: In store block loop, adding: 0x%08" PRIx64 "\n",
+				 function, temp_block->offset);
+		}
+#endif
+		libvshadow_store_run_mark_as_used(&(store_descriptor->store_runs), temp_block->offset, error);
+		
+		/* If this is a block range list, we make a note of its offset for possible later use
+		 * This is not robust and assumes a single block range list block (99% of cases)
+		 */
+		if (temp_block->record_type == 5)
+		{
+#if defined( HAVE_DEBUG_OUTPUT )
+			if( libcnotify_verbose != 0 )
+			{
+				libcnotify_printf(
+					 "%s: Found block range list block at: 0x%08" PRIx64 "\n",
+					 function, temp_block->offset);
+			}
+#endif
+			block_range_addr = temp_block->offset;
+		}
+		
+		libcdata_list_element_get_next_element(temp_block_element, &temp_block_element2, error);
+	}
+	
+	/* Mark a few other things left over
+	 */
+	libvshadow_store_run_mark_as_used(&(store_descriptor->store_runs), store_descriptor->store_header_offset, error);
+	
+	total_size = libvshadow_store_run_get_total_size(&(store_descriptor->store_runs), error);
+	free_size = libvshadow_store_run_get_free_size(&(store_descriptor->store_runs), error);
+	
+#if defined( HAVE_DEBUG_OUTPUT )
+	if( libcnotify_verbose != 0 )
+	{
+		libcnotify_printf("%s: Was asked to guarantee at least %lu bytes of free space. Snapshot currently has %lu bytes.\n",
+		 function, desired_free_space, free_size );
+		
+		libcnotify_printf(
+			 "%s: Printing run bitmaps:\n",
+			 function );
+		
+		store_run_i = store_descriptor->store_runs;
+		while (store_run_i != NULL)
+		{
+			libcnotify_print_data(
+				store_run_i->run_bitmap,
+				store_run_i->run_bitmap_size,
+				LIBCNOTIFY_PRINT_DATA_FLAG_GROUP_DATA );
+			store_run_i = store_run_i->next_run;
+		}
+	}
+#endif
+	
+	/* Add more space if we need to
+	 */
+	if (free_size < desired_free_space)
+	{
+#if defined( HAVE_DEBUG_OUTPUT )
+		if( libcnotify_verbose != 0 )
+		{
+			libcnotify_printf("%s: Going to add %lu bytes to snapshot.\n",
+			 function, desired_free_space - free_size );
+		}
+#endif
+		
+		/* We'll need to change the current block range list. Make sure we found it earlier.
+		 */
+		if (block_range_addr == 0)
+		{
+			libcnotify_printf("%s: need to add new runs to block range list, but couldn't find existing block range list to alter.\n", function);
+			return -1;
+		}
+		
+		/* Open the data attribute so we can add more space
+		 */
+		na = ntfs_attr_open(ino, AT_DATA, NULL, 0);
+		if (!na)
+		{
+			libcnotify_printf("%s: Unable to get data attribute to expand it while attempting to expand store\n", function);
+			return -1;
+		}
+		if (ntfs_attr_truncate_solid(na, total_size + desired_free_space - free_size))
+		{
+			/* True above indicates failure
+			 */
+			libcnotify_printf("%s: Couldn't expand store.\n", function);
+			return -1;
+		}
+		/* We look through the runs again and re-add them. The add_run function will ignore duplicate runs, and expand newly expanded runs
+		 */
+		memory_set(new_block_range_block, 0, 16256);
+		ctx = ntfs_attr_get_search_ctx(ino, NULL);
+		while (ntfs_attr_lookup(AT_UNUSED, NULL, 0, 0, 0, NULL, 0, ctx) == 0)
+		{
+			rec = ctx->attr;
+			if (rec->non_resident)
+			{
+				runs = ntfs_mapping_pairs_decompress(vol, rec, NULL);
+				if (runs)
+				{
+					for (i = 0; runs[i].length > 0; i++)
+					{
+#if defined( HAVE_DEBUG_OUTPUT )
+						if( libcnotify_verbose != 0 )
+						{
+							libcnotify_printf("%s: Adding run: VCN: %8lld LCN: %8lld Size: %8lld\n",
+									function,
+									(long long)runs[i].vcn,
+									(long long)runs[i].lcn,
+									(long long)
+									runs[i].length);
+						}
+#endif
+						libvshadow_store_run_add_run(&(store_descriptor->store_runs), (long long)runs[i].lcn * cluster_size, runs[i].length * cluster_size, error);
+						
+						/* If we updated the runs, we need update the block range list
+						 * otherwise, windows freaks out and deletes all the snapshots.
+						 * We just set the block range list to be equal to our runs.
+						 * libvshadow doesn't care about this during runtime, we just need to write it to disk.
+						 * Also, we blindly assume there is only one block range list block (they're 16K each, if you need more than that, damn giant snapshot and fragmentation hell)
+						 * We will make this more robust later.
+						 */
+						range_start = (long long)runs[i].lcn * cluster_size;
+						range_relative = range_start - store_descriptor->store_header_offset;
+						range_size = runs[i].length * cluster_size;
+						memcpy(new_block_range_block + (i * 24), &range_start, 8);
+						memcpy(new_block_range_block + (i * 24) + 8, &range_relative, 8);
+						memcpy(new_block_range_block + (i * 24) + 16, &range_size, 8);
+					}
+					free(runs);
+				}
+			}
+		}
+		
+		/* Now write our new block range list
+		 */		
+		libbfio_handle_seek_offset(internal_store->file_io_handle, block_range_addr + 128, SEEK_SET, error);
+		if (libbfio_handle_write_buffer(internal_store->file_io_handle, new_block_range_block, 16256, error) != 16256)
+		{
+			libcnotify_printf("%s: error writing new block range list to 0x%08" PRIx64 "\n",
+				function, store_descriptor->index, block_range_addr + 128);
+			return -1;
+		}
+
+		
+		ntfs_attr_close(na);
+	} /* end if free size inadequate */
+	
+	/* Now we can unmount it
+	 */
+	ntfs_inode_close(ino);
+	ntfs_umount(vol, FALSE);
+	
+#if defined( HAVE_DEBUG_OUTPUT )
+	if( libcnotify_verbose != 0 )
+	{
+		libcnotify_printf(
+		 "%s: Just finished reading store blocks. Total size: %" PRIu64 " - Total free space: %" PRIu64 "\n",
+		 function, libvshadow_store_run_get_total_size(&(store_descriptor->store_runs), error),
+		 libvshadow_store_run_get_free_size(&(store_descriptor->store_runs), error));
+	
+		libcnotify_printf(
+			 "%s: Printing run bitmaps:\n",
+			 function );
+		
+
+		store_run_i = store_descriptor->store_runs;
+		while (store_run_i != NULL)
+		{
+			libcnotify_print_data(
+				store_run_i->run_bitmap,
+				store_run_i->run_bitmap_size,
+				LIBCNOTIFY_PRINT_DATA_FLAG_GROUP_DATA );
+			store_run_i = store_run_i->next_run;
+		}
+	}
+#endif
+
+		return 0;
 }
 
 /* Reads (store) data at the current offset into a buffer using a Basic File IO (bfio) handle
@@ -635,6 +989,366 @@ ssize_t libvshadow_store_read_buffer_at_offset(
 	}
 #endif
 	return( read_count );
+
+on_error:
+#if defined( HAVE_LIBVSHADOW_MULTI_THREAD_SUPPORT )
+	libcthreads_read_write_lock_release_for_write(
+	 internal_store->read_write_lock,
+	 NULL );
+#endif
+	return( -1 );
+}
+
+/* Write versions of above read functions */
+
+/* Writes buffer into (store) data at the current offset using a Basic File IO (bfio) handle
+ * This function is not multi-thread safe acquire write lock before call
+ * Returns the number of bytes written or -1 on error
+ */
+ssize_t libvshadow_internal_store_write_buffer_to_file_io_handle(
+         libvshadow_internal_store_t *internal_store,
+         libbfio_handle_t *file_io_handle,
+         void *buffer,
+         size_t buffer_size,
+         libcerror_error_t **error )
+{
+	libvshadow_store_descriptor_t *store_descriptor = NULL;
+	static char *function                           = "libvshadow_internal_store_write_buffer_to_file_io_handle";
+	ssize_t write_count                             = 0;
+
+	if( internal_store == NULL )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+		 LIBCERROR_ARGUMENT_ERROR_INVALID_VALUE,
+		 "%s: invalid store.",
+		 function );
+
+		return( -1 );
+	}
+	if( internal_store->internal_volume == NULL )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_RUNTIME_ERROR_VALUE_MISSING,
+		 "%s: invalid store - missing internal volume.",
+		 function );
+
+		return( -1 );
+	}
+	if( internal_store->current_offset < 0 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_RUNTIME_ERROR_VALUE_OUT_OF_BOUNDS,
+		 "%s: invalid store - current offset value out of bounds.",
+		 function );
+
+		return( -1 );
+	}
+	if( buffer_size == 0 )
+	{
+		return( 0 );
+	}
+	if( (size64_t) internal_store->current_offset >= internal_store->internal_volume->size )
+	{
+		return( 0 );
+	}
+	if( (size64_t) ( internal_store->current_offset + buffer_size ) > internal_store->internal_volume->size )
+	{
+		buffer_size = (size_t) ( internal_store->internal_volume->size - internal_store->current_offset );
+	}
+	if( libcdata_array_get_entry_by_index(
+	     internal_store->internal_volume->store_descriptors_array,
+	     internal_store->store_descriptor_index,
+	     (intptr_t **) &store_descriptor,
+	     error ) != 1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_RUNTIME_ERROR_GET_FAILED,
+		 "%s: unable to retrieve store descriptor: %d.",
+		 function,
+		 internal_store->store_descriptor_index );
+
+		return( -1 );
+	}
+	write_count = libvshadow_store_descriptor_write_buffer(
+		      store_descriptor,
+		      file_io_handle,
+		      (uint8_t *) buffer,
+		      buffer_size,
+		      internal_store->current_offset,
+		      store_descriptor,
+		      error );
+
+	if( write_count != (ssize_t) buffer_size )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_IO,
+		 LIBCERROR_IO_ERROR_READ_FAILED,
+		 "%s: unable to write buffer to store descriptor: %d.",
+		 function,
+		 internal_store->store_descriptor_index );
+
+		return( -1 );
+	}
+	internal_store->current_offset += write_count;
+
+	return( write_count );
+}
+
+/* Writes buffer into (store) data at the current offset
+ * Returns the number of bytes written or -1 on error
+ */
+ssize_t libvshadow_store_write_buffer(
+         libvshadow_store_t *store,
+         void *buffer,
+         size_t buffer_size,
+         libcerror_error_t **error )
+{
+	libvshadow_internal_store_t *internal_store = NULL;
+	static char *function                       = "libvshadow_store_write_buffer";
+	ssize_t write_count                         = 0;
+
+	if( store == NULL )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+		 LIBCERROR_ARGUMENT_ERROR_INVALID_VALUE,
+		 "%s: invalid store.",
+		 function );
+
+		return( -1 );
+	}
+	internal_store = (libvshadow_internal_store_t *) store;
+
+#if defined( HAVE_LIBVSHADOW_MULTI_THREAD_SUPPORT )
+	if( libcthreads_read_write_lock_grab_for_write(
+	     internal_store->read_write_lock,
+	     error ) != 1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_RUNTIME_ERROR_SET_FAILED,
+		 "%s: unable to grab read/write lock for writing.",
+		 function );
+
+		return( -1 );
+	}
+#endif
+	write_count = libvshadow_internal_store_write_buffer_to_file_io_handle(
+		      internal_store,
+		      internal_store->file_io_handle,
+		      buffer,
+		      buffer_size,
+		      error );
+
+	if( write_count == -1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_IO,
+		 LIBCERROR_IO_ERROR_READ_FAILED,
+		 "%s: unable to read buffer.",
+		 function );
+
+		write_count = -1;
+	}
+#if defined( HAVE_LIBVSHADOW_MULTI_THREAD_SUPPORT )
+	if( libcthreads_read_write_lock_release_for_write(
+	     internal_store->read_write_lock,
+	     error ) != 1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_RUNTIME_ERROR_SET_FAILED,
+		 "%s: unable to release read/write lock for writing.",
+		 function );
+
+		return( -1 );
+	}
+#endif
+	return( write_count );
+}
+
+/* Writes a buffer into (store) data at the current offset using a Basic File IO (bfio) handle
+ * Returns the number of bytes written or -1 on error
+ */
+ssize_t libvshadow_store_write_buffer_to_file_io_handle(
+         libvshadow_store_t *store,
+         libbfio_handle_t *file_io_handle,
+         void *buffer,
+         size_t buffer_size,
+         libcerror_error_t **error )
+{
+	libvshadow_internal_store_t *internal_store = NULL;
+	static char *function                       = "libvshadow_store_write_buffer_to_file_io_handle";
+	ssize_t write_count                         = 0;
+
+	if( store == NULL )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+		 LIBCERROR_ARGUMENT_ERROR_INVALID_VALUE,
+		 "%s: invalid store.",
+		 function );
+
+		return( -1 );
+	}
+	internal_store = (libvshadow_internal_store_t *) store;
+
+#if defined( HAVE_LIBVSHADOW_MULTI_THREAD_SUPPORT )
+	if( libcthreads_read_write_lock_grab_for_write(
+	     internal_store->read_write_lock,
+	     error ) != 1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_RUNTIME_ERROR_SET_FAILED,
+		 "%s: unable to grab read/write lock for writing.",
+		 function );
+
+		return( -1 );
+	}
+#endif
+	write_count = libvshadow_internal_store_write_buffer_to_file_io_handle(
+		      internal_store,
+		      file_io_handle,
+		      buffer,
+		      buffer_size,
+		      error );
+
+	if( write_count == -1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_IO,
+		 LIBCERROR_IO_ERROR_READ_FAILED,
+		 "%s: unable to read buffer.",
+		 function );
+
+		write_count = -1;
+	}
+#if defined( HAVE_LIBVSHADOW_MULTI_THREAD_SUPPORT )
+	if( libcthreads_read_write_lock_release_for_write(
+	     internal_store->read_write_lock,
+	     error ) != 1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_RUNTIME_ERROR_SET_FAILED,
+		 "%s: unable to release read/write lock for writing.",
+		 function );
+
+		return( -1 );
+	}
+#endif
+	return( write_count );
+}
+
+/* Writes (store) data at a specific offset
+ * Returns the number of bytes written or -1 on error
+ */
+ssize_t libvshadow_store_write_buffer_to_offset(
+         libvshadow_store_t *store,
+         void *buffer,
+         size_t buffer_size,
+         off64_t offset,
+         libcerror_error_t **error )
+{
+	libvshadow_internal_store_t *internal_store = NULL;
+	static char *function                       = "libvshadow_store_write_buffer_to_offset";
+	ssize_t write_count                         = 0;
+
+	if( store == NULL )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+		 LIBCERROR_ARGUMENT_ERROR_INVALID_VALUE,
+		 "%s: invalid store.",
+		 function );
+
+		return( -1 );
+	}
+	internal_store = (libvshadow_internal_store_t *) store;
+
+#if defined( HAVE_LIBVSHADOW_MULTI_THREAD_SUPPORT )
+	if( libcthreads_read_write_lock_grab_for_write(
+	     internal_store->read_write_lock,
+	     error ) != 1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_RUNTIME_ERROR_SET_FAILED,
+		 "%s: unable to grab read/write lock for writing.",
+		 function );
+
+		return( -1 );
+	}
+#endif
+	if( libvshadow_internal_store_seek_offset(
+	     internal_store,
+	     offset,
+	     SEEK_SET,
+	     error ) == -1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_IO,
+		 LIBCERROR_IO_ERROR_SEEK_FAILED,
+		 "%s: unable to seek offset.",
+		 function );
+
+		goto on_error;
+	}
+	write_count = libvshadow_internal_store_write_buffer_to_file_io_handle(
+		      internal_store,
+		      internal_store->file_io_handle,
+		      buffer,
+		      buffer_size,
+		      error );
+
+	if( write_count == -1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_IO,
+		 LIBCERROR_IO_ERROR_READ_FAILED,
+		 "%s: unable to read buffer.",
+		 function );
+
+		goto on_error;
+	}
+#if defined( HAVE_LIBVSHADOW_MULTI_THREAD_SUPPORT )
+	if( libcthreads_read_write_lock_release_for_write(
+	     internal_store->read_write_lock,
+	     error ) != 1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_RUNTIME_ERROR_SET_FAILED,
+		 "%s: unable to release read/write lock for writing.",
+		 function );
+
+		return( -1 );
+	}
+#endif
+	return( write_count );
 
 on_error:
 #if defined( HAVE_LIBVSHADOW_MULTI_THREAD_SUPPORT )

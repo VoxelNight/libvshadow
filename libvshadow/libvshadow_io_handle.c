@@ -995,6 +995,7 @@ int libvshadow_io_handle_read_catalog(
 					last_store_descriptor->store_bitmap_offset           = store_descriptor->store_bitmap_offset;
 					last_store_descriptor->store_previous_bitmap_offset  = store_descriptor->store_previous_bitmap_offset;
 					last_store_descriptor->has_in_volume_store_data      = 1;
+					last_store_descriptor->store_inode						= store_descriptor->store_inode; /* dude, it took fucking hours to find this */
 				}
 #if defined( HAVE_DEBUG_OUTPUT )
 				else

@@ -62,6 +62,20 @@ struct mount_handle
 	 */
 	FILE *notify_stream;
 
+	/* The filename of the volume file/device. I.e. /dev/sda1
+	 */
+	system_character_t *volume_filename;
+	
+	/* Whether we are mounted read only, or read-write
+	 */
+	int write_enabled;
+	
+	/* Minimum free space (in megabytes)
+	 * Only used if write support is enabled
+	 */
+	size64_t min_free_space;
+
+
 	/* Value to indicate if abort was signalled
 	 */
 	int abort;
@@ -84,6 +98,11 @@ int mount_handle_set_volume_offset(
      const system_character_t *string,
      libcerror_error_t **error );
 
+int mount_handle_set_min_free_space(
+     mount_handle_t *mount_handle,
+     const system_character_t *string,
+     libcerror_error_t **error );
+
 int mount_handle_open_input(
      mount_handle_t *mount_handle,
      const system_character_t *filename,
@@ -94,6 +113,13 @@ int mount_handle_close_input(
      libcerror_error_t **error );
 
 ssize_t mount_handle_read_buffer(
+         mount_handle_t *mount_handle,
+         int store_index,
+         uint8_t *buffer,
+         size_t size,
+         libcerror_error_t **error );
+
+ssize_t mount_handle_write_buffer(
          mount_handle_t *mount_handle,
          int store_index,
          uint8_t *buffer,

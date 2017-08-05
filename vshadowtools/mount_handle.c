@@ -314,6 +314,52 @@ int mount_handle_set_volume_offset(
 	return( 1 );
 }
 
+/* Sets the volume offset
+ * Returns 1 if successful or -1 on error
+ */
+int mount_handle_set_min_free_space(
+     mount_handle_t *mount_handle,
+     const system_character_t *string,
+     libcerror_error_t **error )
+{
+	static char *function = "mount_handle_set_min_free_space";
+	size_t string_length  = 0;
+	uint64_t value_64bit  = 0;
+
+	if( mount_handle == NULL )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+		 LIBCERROR_ARGUMENT_ERROR_INVALID_VALUE,
+		 "%s: invalid mount handle.",
+		 function );
+
+		return( -1 );
+	}
+	string_length = system_string_length(
+	                 string );
+
+	if( libcsystem_string_decimal_copy_to_64_bit(
+	     string,
+	     string_length + 1,
+	     &value_64bit,
+	     error ) != 1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_RUNTIME_ERROR_COPY_FAILED,
+		 "%s: unable to copy string to 64-bit decimal.",
+		 function );
+
+		return( -1 );
+	}
+	mount_handle->min_free_space = (size64_t) value_64bit * (1024 * 1024);
+
+	return( 1 );
+}
+
 /* Opens the mount handle
  * Returns 1 if successful, 0 if no VSS enabled volume was found or -1 on error
  */
@@ -398,7 +444,7 @@ int mount_handle_open_input(
 		if( libvshadow_volume_open_file_io_handle(
 		     mount_handle->input_volume,
 		     mount_handle->input_file_io_handle,
-		     LIBVSHADOW_OPEN_READ,
+		     LIBVSHADOW_OPEN_READ | (mount_handle->write_enabled ? LIBVSHADOW_OPEN_WRITE : 0),
 		     error ) != 1 )
 		{
 			libcerror_error_set(
@@ -603,6 +649,82 @@ ssize_t mount_handle_read_buffer(
 		return( -1 );
 	}
 	return( read_count );
+}
+
+/* Writes a buffer to the specified input store
+ [*] Returns the number of bytes written if successful or -1 on error
+ */
+ssize_t mount_handle_write_buffer(
+         mount_handle_t *mount_handle,
+         int store_index,
+         uint8_t *buffer,
+         size_t size,
+         libcerror_error_t **error )
+{
+	static char *function = "mount_handle_write_buffer";
+	ssize_t write_count   = 0;
+
+	if( mount_handle == NULL )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+		 LIBCERROR_ARGUMENT_ERROR_INVALID_VALUE,
+		 "%s: invalid mount handle.",
+		 function );
+
+		return( -1 );
+	}
+	if( ( store_index < 0 )
+	 || ( store_index >= mount_handle->number_of_inputs ) )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+		 LIBCERROR_RUNTIME_ERROR_VALUE_OUT_OF_BOUNDS,
+		 "%s: unsupported to store index value out of bounds.",
+		 function );
+
+		return( -1 );
+	}
+	if( mount_handle->inputs[ store_index ] == NULL )
+	{
+		if( libvshadow_volume_get_store(
+		     mount_handle->input_volume,
+		     store_index,
+		     &( mount_handle->inputs[ store_index ] ),
+		     error ) != 1 )
+		{
+			libcerror_error_set(
+			 error,
+			 LIBCERROR_ERROR_DOMAIN_RUNTIME,
+			 LIBCERROR_RUNTIME_ERROR_VALUE_OUT_OF_BOUNDS,
+			 "%s: unable to retrieve input store: %d from input volume.",
+			 function,
+			 store_index );
+
+			return( -1 );
+		}
+	}
+	write_count = libvshadow_store_write_buffer(
+	               mount_handle->inputs[ store_index ],
+	               buffer,
+	               size,
+	               error );
+
+	if( write_count == -1 )
+	{
+		libcerror_error_set(
+		 error,
+		 LIBCERROR_ERROR_DOMAIN_IO,
+		 LIBCERROR_IO_ERROR_READ_FAILED,
+		 "%s: unable to write buffer to input store: %d.",
+		 function,
+		 store_index );
+
+		return( -1 );
+	}
+	return( write_count );
 }
 
 /* Seeks a specific offset from the specified input

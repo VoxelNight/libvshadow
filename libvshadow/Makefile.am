@@ -44,6 +44,7 @@ libvshadow_la_SOURCES = \
 	libvshadow_store.c libvshadow_store.h \
 	libvshadow_store_block.c libvshadow_store_block.h \
 	libvshadow_store_descriptor.c libvshadow_store_descriptor.h \
+	libvshadow_store_runs.c libvshadow_store_runs.h \
 	libvshadow_types.h \
 	libvshadow_unused.h \
 	libvshadow_volume.c libvshadow_volume.h \

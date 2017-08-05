@@ -85,6 +85,13 @@ int libvshadow_store_has_in_volume_data(
      libvshadow_store_t *store,
      libcerror_error_t **error );
 
+LIBVSHADOW_EXTERN \
+int libvshadow_store_find_free_space(
+         libvshadow_store_t *store,
+		 system_character_t *volume_filename,
+		 size64_t desired_free_space,
+         libcerror_error_t **error );
+
 ssize_t libvshadow_internal_store_read_buffer_from_file_io_handle(
          libvshadow_internal_store_t *internal_store,
          libbfio_handle_t *file_io_handle,
@@ -109,6 +116,36 @@ ssize_t libvshadow_store_read_buffer_from_file_io_handle(
 
 LIBVSHADOW_EXTERN \
 ssize_t libvshadow_store_read_buffer_at_offset(
+         libvshadow_store_t *store,
+         void *buffer,
+         size_t buffer_size,
+         off64_t offset,
+         libcerror_error_t **error );
+
+ssize_t libvshadow_internal_store_write_buffer_to_file_io_handle(
+         libvshadow_internal_store_t *internal_store,
+         libbfio_handle_t *file_io_handle,
+         void *buffer,
+         size_t buffer_size,
+         libcerror_error_t **error );
+
+LIBVSHADOW_EXTERN \
+ssize_t libvshadow_store_write_buffer(
+         libvshadow_store_t *store,
+         void *buffer,
+         size_t buffer_size,
+         libcerror_error_t **error );
+
+LIBVSHADOW_EXTERN \
+ssize_t libvshadow_store_write_buffer_to_file_io_handle(
+         libvshadow_store_t *store,
+         libbfio_handle_t *file_io_handle,
+         void *buffer,
+         size_t buffer_size,
+         libcerror_error_t **error );
+
+LIBVSHADOW_EXTERN \
+ssize_t libvshadow_store_write_buffer_to_offset(
          libvshadow_store_t *store,
          void *buffer,
          size_t buffer_size,
