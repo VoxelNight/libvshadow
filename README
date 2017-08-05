@@ -1,23 +1,47 @@
 libvshadow is a library to access the Volume Shadow Snapshot (VSS) format.
 The VSS format is used by Windows, as of Vista, to maintain copies of data on a storage media volume.
 
-Project information:
 
+This fork of libvshadow adds write support.
+Write support is very experimental and currently only available on linux.
+If you encounter any data or snapshot corruption when using this, please open an issue.
+
+
+Cool features:
+* You can write to snapshots
+* Snapshots can be expanded to allow additional data to be written to them (as opposed to just overwriting stuff already stored in the snapshot)
+* This thing tries to write over existing data if it can before adding new data to the snapshot
+* Makes some attempt to minimize inter-snapshot data when performing writes
+
+
+This fork has ntfs-3g as a dependency. This allows us to expand the files representing the snapshots in \System Volume Information\.
+
+
+Currently known issues/limitations:
+* Store bitmaps are not updated during writes
+* Stores can only be expanded when opening the vss* files
+* When closing a store that was expanded, unused space is not reclaimed
+* Libvshadow can not remove data (i.e. shrink) a snapshot
+** It can and will write over existing data and reuse block descriptors when able
+* No Windows support (yet, it's totally in progress)
+* Libvshadow works (almost) entirely at a block level. It doesn't know anything about NTFS
+** Modifications made to snapshots may result in current timestamps being written into the snapshot
+* Lots of quirks that would allow a forensic examiner to determine if the snapshot was modified (if they specifically look for them)
+* Not guaranteed to not jack up your snapshots (write support is experimental)
+
+
+Project information:
 * Status: alpha
 * Licence: LGPLv3+
 
-Also see:
-
-* OSDFC 2012: Paper - Windowless Shadow Snapshots: https://github.com/libyal/documentation/blob/master/Paper%20-%20Windowless%20Shadow%20Snapshots.pdf
-* OSDFC 2012: Slides - Windowless Shadow Snapshots: https://github.com/libyal/documentation/blob/master/Slides%20-%20Windowless%20Shadow%20Snapshots.pdf
-
 Work in progress:
-
 * Dokan library support
 * Multi-threading support
+* Windows write support
 
-For more information see:
 
+Some of the original author's documentation:
 * Project documentation: https://github.com/libyal/libvshadow/wiki/Home
 * How to build from source: https://github.com/libyal/libvshadow/wiki/Building
-
+* OSDFC 2012: Paper - Windowless Shadow Snapshots: https://github.com/libyal/documentation/blob/master/Paper%20-%20Windowless%20Shadow%20Snapshots.pdf
+* OSDFC 2012: Slides - Windowless Shadow Snapshots: https://github.com/libyal/documentation/blob/master/Slides%20-%20Windowless%20Shadow%20Snapshots.pdf
