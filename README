@@ -1,3 +1,8 @@
+The version of libvshadow with write support is in a separate branch.
+Write support branch: https://github.com/VoxelNight/libvshadow/tree/20161111-rw
+
+The master branch does not (yet) have write support.
+
 libvshadow is a library to access the Volume Shadow Snapshot (VSS) format.
 The VSS format is used by Windows, as of Vista, to maintain copies of data on a storage media volume.
 
